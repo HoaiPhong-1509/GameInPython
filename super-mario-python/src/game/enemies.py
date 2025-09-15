@@ -7,6 +7,7 @@ class Enemy:
         self.direction = 1
         self.move_range = move_range
         self.health = health
+        
 
         # Vận tốc di chuyển
         self.speed = 2  
@@ -43,6 +44,7 @@ class Enemy:
         if self.animation_timer >= 1:
             self.animation_timer = 0
             self.current_frame = (self.current_frame + 1) % len(self.frames_right)
+        pass
 
     def render(self, screen):
         if self.direction > 0:

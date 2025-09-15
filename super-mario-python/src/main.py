@@ -4,10 +4,10 @@ from game.player import Player
 from game.enemies import Enemy
 from game.levels import Level
 from game.item import Item
+from game.projectile import Projectile
 import os
 
 
-items = []
 # Initialize Pygame
 pygame.init()
 
@@ -59,6 +59,9 @@ level_data_list = [
 current_level = 0
 level = Level(level_data_list[current_level])
 
+items_per_level = [[] for _ in range(len(level_data_list))]
+items = items_per_level[current_level]
+
 def reset_enemies_for_level(level_idx):
     if level_idx == 0:
         return [
@@ -74,7 +77,11 @@ def reset_enemies_for_level(level_idx):
     return []
 
 player = Player(100, 400)  
-enemies = reset_enemies_for_level(current_level)
+
+# Khởi tạo danh sách enemy cho từng màn
+enemies_per_level = [reset_enemies_for_level(i) for i in range(len(level_data_list))]
+current_level = 0
+enemies = enemies_per_level[current_level]
 
 def draw_game_over(screen):
     # Tạo lớp phủ mờ
@@ -94,7 +101,8 @@ def draw_game_over(screen):
     return retry_rect
 
 def main():
-    global current_level, level, enemies, player
+    global current_level, level, enemies, player, items
+    attack_cooldown = 0
     game_over = False
     while True:
         for event in pygame.event.get():
@@ -148,19 +156,57 @@ def main():
                 if current_level >= len(level_data_list):
                     current_level = 0
                 level = Level(level_data_list[current_level])
-                player = Player(0, player.rect.y)
-                enemies = reset_enemies_for_level(current_level)
-            # Chỉ cho phép chuyển map trái nếu không phải map 1
+                player.rect.x = 0
+                enemies = enemies_per_level[current_level]
+                items = items_per_level[current_level]
+
+            # Khi sang màn trái (nếu có)
             elif player.rect.left < 0 and current_level != 0:
                 current_level -= 1
                 if current_level < 0:
                     current_level = len(level_data_list) - 1
                 level = Level(level_data_list[current_level])
-                player = Player(screen_width - player.rect.width, player.rect.y)
-                enemies = reset_enemies_for_level(current_level)
+                player.rect.x = screen_width - player.rect.width
+                enemies = enemies_per_level[current_level]
+                items = items_per_level[current_level]
             # Chặn mép trái ở map 1
             if current_level == 0 and player.rect.left < 0:
                 player.rect.left = 0
+            
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_z] and attack_cooldown == 0 and not player.charging:
+                player.attack()
+                attack_cooldown = 15  # 15 frame cooldown
+
+            if attack_cooldown > 0:
+                attack_cooldown -= 1
+
+            # Update projectiles
+            for proj in player.projectiles:
+                proj.update()
+            # Xóa đạn không còn active
+            player.projectiles = [p for p in player.projectiles if p.active]
+
+            # Kiểm tra va chạm đạn với enemy
+            for proj in player.projectiles:
+                for enemy in enemies:
+                    if proj.active and enemy.rect.colliderect(proj.rect):
+                        proj.active = False
+                        enemy.health -= 10  # Mỗi lần trúng giảm 10 máu
+                        if enemy.health <= 0:
+                            enemies.remove(enemy)
+                        break
+
+            if keys[pygame.K_c] and player.energy >= 100 and not player.charging and not player.special_active:
+                player.special_attack()
+                for enemy in enemies:
+                    if player.special_direction == 1 and enemy.rect.left > player.rect.right and abs(enemy.rect.centery - player.rect.centery) < 40:
+                        enemy.health -= 80
+                    elif player.special_direction == -1 and enemy.rect.right < player.rect.left and abs(enemy.rect.centery - player.rect.centery) < 40:
+                        enemy.health -= 80
+                # Xóa enemy máu <= 0 ngay sau khi chưởng
+                enemies_per_level[current_level] = [e for e in enemies_per_level[current_level] if e.health > 0]
+                enemies = enemies_per_level[current_level]
             
         # Render everything
         screen.fill((135, 206, 235))
