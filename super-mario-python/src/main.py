@@ -76,7 +76,7 @@ def reset_enemies_for_level(level_idx):
         ]
     return []
 
-player = Player(100, 400)  
+player = Player(100, 350)  
 
 # Khởi tạo danh sách enemy cho từng màn
 enemies_per_level = [reset_enemies_for_level(i) for i in range(len(level_data_list))]
@@ -99,6 +99,7 @@ def draw_game_over(screen):
     retry_rect = text_retry.get_rect(center=(screen.get_width()//2, 300))
     screen.blit(text_retry, retry_rect)
     return retry_rect
+
 
 def main():
     global current_level, level, enemies, player, items

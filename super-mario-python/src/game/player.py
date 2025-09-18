@@ -1,58 +1,13 @@
 import pygame
-import time
 import os
-import math
-
-
-
-def load_walk_frames(base_path, prefix, count, size=(48, 55)):
-    frames = []
-    for i in range(1, count + 1):
-        file = f"{prefix}{i}-removebg.png"
-        path = os.path.join(base_path, file)
-        if os.path.exists(path):
-            img = pygame.image.load(path).convert_alpha()
-            img = pygame.transform.scale(img, size)  # ép về 48×48
-            frames.append(img)
-    return frames
-
-
+import time
 
 class Player:
     def __init__(self, x, y):
-        base_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'Character')
-
-        # Walk frames (phải)
-        self.walk_right_frames = load_walk_frames(base_path, "NV-right-walk", 3)
-
-        # Flip sang trái
-        self.walk_left_frames = [pygame.transform.flip(img, True, False) for img in self.walk_right_frames]
-
-        # Jump frame
-        img_jump = pygame.image.load(os.path.join(base_path, "NV-jump-removebg.png")).convert_alpha()
-        img_jump = pygame.transform.scale(img_jump, (48, 48))  # ép 48×48 luôn
-        self.img_jump = img_jump
-
-
-
-        # Animation state
-        self.image = self.walk_right_frames[0]
-
-        # --- Hitbox dựa theo bounding box pixel thật ---
-        mask = pygame.mask.from_surface(self.image)
-        bbox = mask.get_bounding_rects()[0]  # lấy rect bao quanh pixel không trong suốt
-
-        # rect (hitbox) khớp với phần nhân vật, bỏ nền trong suốt
-        self.rect = pygame.Rect(x, y, bbox.width, bbox.height)
-        self.rect.bottomleft = (x, y + bbox.height)
-
-        # Ảnh căn theo hitbox
-        self.image_rect = self.image.get_rect(midbottom=self.rect.midbottom)
-
-        # Animation info
+        self.width = 48
+        self.height = 55
+        self.rect = pygame.Rect(x, y, self.width, self.height)
         self.facing_right = True
-        self.current_frame = 0
-        self.animation_timer = 0
 
         # Thuộc tính khác
         self.vel_y = 0
@@ -70,6 +25,71 @@ class Player:
         self.special_active = False
         self.special_timer = 0
         self.special_direction = 1
+
+        # Thêm thuộc tính cho sprite
+        self.sprites = []
+        self.load_sprites()
+        self.current_frame = 0
+        self.frame_counter = 0
+        self.frame_speed = 6
+
+        # Cập nhật lại rect và hitbox cho khớp sprite
+        self.image = self.sprites[0]
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.width = self.image.get_width()
+        self.height = self.image.get_height()
+        self.hitbox = self.rect.copy()
+
+    def load_sprites(self):
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "Character")
+        sheet_path = os.path.join(assets_dir, "Characters-walk.png")
+        sheet = pygame.image.load(sheet_path).convert_alpha()
+
+        num_frames = 6
+        frame_width = sheet.get_width() // num_frames
+        frame_height = sheet.get_height()
+
+        target_height = 55
+        self.sprites = []
+        self.bboxes = []
+        self.frame_offsets = []
+
+        for i in range(num_frames):
+            crop_width = frame_width - 20  # Số pixel muốn trừ
+            frame = sheet.subsurface((i * frame_width, 0, crop_width, frame_height))
+
+            # Tìm vùng pixel có màu
+            mask = pygame.mask.from_surface(frame)
+            rects = mask.get_bounding_rects()
+            bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+
+            # Cắt vùng có màu
+            cropped_frame = frame.subsurface(bbox)
+
+            # Scale theo chiều cao chuẩn
+            scale_ratio = target_height / cropped_frame.get_height()
+            new_width = int(cropped_frame.get_width() * scale_ratio)
+            scaled_frame = pygame.transform.scale(cropped_frame, (new_width, target_height))
+
+            # Lưu sprite đã scale
+            self.sprites.append(scaled_frame)
+
+            # Bbox sau khi scale
+            scaled_bbox = pygame.Rect(0, 0, new_width, target_height)
+            self.bboxes.append(scaled_bbox)
+
+            # Offset để căn giữa sprite trên khung 48x55
+            offset_x = (self.width - new_width) // 2
+            offset_y = 0
+            self.frame_offsets.append((offset_x, offset_y))
+
+        # Cập nhật rect ban đầu
+        self.image = self.sprites[0]
+        self.rect = self.image.get_rect(topleft=(self.rect.x, self.rect.y))
+        self.width = self.image.get_width()
+        self.height = target_height
+        self.bbox = self.bboxes[0]
+        self.hitbox = self.rect.copy()
 
     def update(self, platforms):
         keys = pygame.key.get_pressed()
@@ -89,15 +109,12 @@ class Player:
         if keys[pygame.K_SPACE] and self.on_ground:
             self.vel_y = -15
             self.on_ground = False
-            self.image = self.img_jump
 
-        keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT]:
             self.direction = -1
         if keys[pygame.K_RIGHT]:
             self.direction = 1
 
-        keys = pygame.key.get_pressed()
         # Gồng nộ khi giữ phím X
         if keys[pygame.K_x]:
             self.charging = True
@@ -143,42 +160,54 @@ class Player:
 
         for plat in platforms:
             if self.rect.colliderect(plat.rect):
-                # rơi xuống đất
                 if self.vel_y > 0 and old_y + self.rect.height <= plat.rect.top + 5:
                     self.rect.bottom = plat.rect.top
                     self.vel_y = 0
                     self.on_ground = True
-                # đụng trần
                 elif self.vel_y < 0 and old_y >= plat.rect.bottom - 5:
                     self.rect.top = plat.rect.bottom
                     self.vel_y = 0
                     self.hit_head = True
                     self.last_head_platform = plat
 
-        # --- Animation ---
-        if self.on_ground:
-            if moving:
-                self.animate_walk()
-            else:
-                self.image = self.walk_right_frames[0] if self.facing_right else self.walk_left_frames[0]
-
         if self.invincible and (time.time() - self.invincible_start > 3):
             self.invincible = False
 
-        # Cập nhật vị trí ảnh theo hitbox
-        self.image_rect.midbottom = self.rect.midbottom
-      
-
-    def animate_walk(self):
-        self.animation_timer += 1
-        if self.animation_timer >= 10:
-            self.animation_timer = 0
-            self.current_frame = (self.current_frame + 1) % len(self.walk_right_frames)
-
-        if self.facing_right:
-            self.image = self.walk_right_frames[self.current_frame]
+        # Cập nhật frame khi di chuyển
+        moving = dx != 0
+        if moving:
+            self.frame_counter += 1
+            if self.frame_counter >= self.frame_speed:
+                self.current_frame = (self.current_frame + 1) % len(self.sprites)
+                self.frame_counter = 0
         else:
-            self.image = self.walk_left_frames[self.current_frame]
+            self.current_frame = 0  # frame đứng yên
+
+        # Cập nhật hướng
+        if dx > 0:
+            self.facing_right = True
+        elif dx < 0:
+            self.facing_right = False
+
+        # Giữ nguyên midbottom khi đổi frame
+        old_midbottom = self.rect.midbottom
+        self.image = self.sprites[self.current_frame]
+        self.rect = self.image.get_rect()
+        self.rect.midbottom = old_midbottom
+
+        self.bbox = self.bboxes[self.current_frame]
+        offset_x, offset_y = self.frame_offsets[self.current_frame]
+
+        # Hitbox căn giữa sprite trên khung 48x55
+        hitbox_x = self.rect.x + offset_x
+        hitbox_y = self.rect.y + offset_y
+
+        self.hitbox = pygame.Rect(
+            hitbox_x,
+            hitbox_y,
+            self.bbox.width,
+            self.bbox.height
+        )
 
     def take_damage(self, amount):
         if not self.invincible:
@@ -199,12 +228,14 @@ class Player:
         self.special_direction = self.direction  # Hướng chưởng
 
     def render(self, screen):
-        draw_player = True
-        if self.invincible:
-            if int((time.time() - self.invincible_start) * 10) % 2 == 0:
-                draw_player = False
-        if draw_player:
-            screen.blit(self.image, self.image_rect)
+        # Vẽ frame hiện tại, lật nếu quay trái
+        img = self.sprites[self.current_frame]
+        offset_x, offset_y = self.frame_offsets[self.current_frame]
+        draw_x = self.rect.x + offset_x
+        draw_y = self.rect.y + offset_y
+        if not self.facing_right:
+            img = pygame.transform.flip(img, True, False)
+        screen.blit(img, (draw_x, draw_y))
 
         font = pygame.font.SysFont(None, 32)
         health_text = font.render(f'HP: {self.health}', True, (255, 255, 255))
@@ -225,7 +256,6 @@ class Player:
                 rx = self.rect.width // 2 + i * 2
                 ry = self.rect.height // 2 + i * 2
                 color = pygame.Color(0)
-                # Alpha thấp hơn để trong suốt hơn (ví dụ chỉ còn 20 * (i / 8))
                 color.hsva = ((self.charge_effect * 5 + i * 40) % 360, 100, 100, int(20 * (i / 8)))
                 s = pygame.Surface((rx*2, ry*2), pygame.SRCALPHA)
                 pygame.draw.ellipse(s, color, (0, 0, rx*2, ry*2), 0)
@@ -242,9 +272,7 @@ class Player:
                 end = (0, self.rect.centery)
                 width = self.rect.left
                 x_pos = 0
-            # Vẽ tia chính
             pygame.draw.line(screen, effect_color, start, end, 16)
-            # Hiệu ứng sáng động nhiều lớp
             for i in range(5):
                 alpha = 120 - i * 20
                 color = (255, 255 - i*40, 0, alpha)
@@ -254,3 +282,6 @@ class Player:
                     screen.blit(s, (x_pos, self.rect.centery - 16 + i*2))
                 else:
                     screen.blit(pygame.transform.flip(s, True, False), (x_pos, self.rect.centery - 16 + i*2))
+
+        # Vẽ hitbox để kiểm tra
+        pygame.draw.rect(screen, (255, 0, 0), self.hitbox, 2)
