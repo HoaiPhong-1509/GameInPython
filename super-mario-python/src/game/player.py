@@ -33,6 +33,12 @@ class Player:
         self.bboxes_stand = []
         self.frame_offsets_walk = []
         self.frame_offsets_stand = []
+        self.sprite_jump = None
+        self.sprite_fall = None
+        self.bbox_jump = None
+        self.bbox_fall = None
+        self.frame_offset_jump = (0, 0)
+        self.frame_offset_fall = (0, 0)
 
         self.load_sprites()
         self.current_frame = 0
@@ -55,6 +61,12 @@ class Player:
         # Stand sheet
         stand_path = os.path.join(assets_dir, "Characters-stand.png")
         stand_sheet = pygame.image.load(stand_path).convert_alpha()
+        # Jump sprite
+        jump_path = os.path.join(assets_dir, "Characters-jump.png")
+        jump_img = pygame.image.load(jump_path).convert_alpha()
+        # Fall sprite
+        fall_path = os.path.join(assets_dir, "Characters-fall.png")
+        fall_img = pygame.image.load(fall_path).convert_alpha()
 
         num_frames_walk = 6
         num_frames_stand = 6
@@ -98,6 +110,27 @@ class Player:
             offset_x = (self.width - new_width) // 2
             offset_y = 0
             self.frame_offsets_stand.append((offset_x, offset_y))
+
+        # Jump sprite
+        mask = pygame.mask.from_surface(jump_img)
+        rects = mask.get_bounding_rects()
+        bbox = rects[0] if rects else pygame.Rect(0, 0, jump_img.get_width(), jump_img.get_height())
+        cropped = jump_img.subsurface(bbox)
+        scale_ratio = 55 / cropped.get_height()
+        new_width = int(cropped.get_width() * scale_ratio)
+        self.sprite_jump = pygame.transform.scale(cropped, (new_width, 55))
+        self.bbox_jump = pygame.Rect(0, 0, new_width, 55)
+        self.frame_offset_jump = ((self.width - new_width) // 2, 0)
+        # Fall sprite
+        mask = pygame.mask.from_surface(fall_img)
+        rects = mask.get_bounding_rects()
+        bbox = rects[0] if rects else pygame.Rect(0, 0, fall_img.get_width(), fall_img.get_height())
+        cropped = fall_img.subsurface(bbox)
+        scale_ratio = 55 / cropped.get_height()
+        new_width = int(cropped.get_width() * scale_ratio)
+        self.sprite_fall = pygame.transform.scale(cropped, (new_width, 55))
+        self.bbox_fall = pygame.Rect(0, 0, new_width, 55)
+        self.frame_offset_fall = ((self.width - new_width) // 2, 0)
 
         # Cập nhật rect ban đầu
         self.image = self.sprites_stand[0]
@@ -186,7 +219,8 @@ class Player:
                     self.hit_head = True
                     self.last_head_platform = plat
 
-        if self.invincible and (time.time() - self.invincible_start > 3):
+        # Hết bất tử sau 1 giây
+        if self.invincible and (time.time() - self.invincible_start > 1):
             self.invincible = False
 
         # Cập nhật frame khi di chuyển
@@ -205,6 +239,10 @@ class Player:
                 self.current_frame = (self.current_frame + 1) % len(self.sprites_stand)
                 self.frame_counter = 0
 
+        # Xác định trạng thái nhảy/rơi
+        self.is_jumping = self.vel_y < 0 and not self.on_ground
+        self.is_falling = self.vel_y > 0 and not self.on_ground
+
         # Cập nhật hướng
         if dx > 0:
             self.facing_right = True
@@ -213,7 +251,15 @@ class Player:
 
         # Giữ nguyên midbottom khi đổi frame
         old_midbottom = self.rect.midbottom
-        if self.is_walking:
+        if self.is_jumping:
+            self.image = self.sprite_jump
+            self.bbox = self.bbox_jump
+            offset_x, offset_y = self.frame_offset_jump
+        elif self.is_falling:
+            self.image = self.sprite_fall
+            self.bbox = self.bbox_fall
+            offset_x, offset_y = self.frame_offset_fall
+        elif self.is_walking:
             self.image = self.sprites_walk[self.current_frame]
             self.bbox = self.bboxes_walk[self.current_frame]
             offset_x, offset_y = self.frame_offsets_walk[self.current_frame]
@@ -255,17 +301,29 @@ class Player:
 
     def render(self, screen):
         # Vẽ frame hiện tại, lật nếu quay trái
-        if self.is_walking:
-            img = self.sprites_walk[self.current_frame]
-            offset_x, offset_y = self.frame_offsets_walk[self.current_frame]
-        else:
-            img = self.sprites_stand[self.current_frame]  # <-- Sửa lại dùng frame hiện tại
-            offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
-        draw_x = self.rect.x + offset_x
-        draw_y = self.rect.y + offset_y
-        if not self.facing_right:
-            img = pygame.transform.flip(img, True, False)
-        screen.blit(img, (draw_x, draw_y))
+        visible = True
+        if self.invincible:
+            # Nhấp nháy: ẩn 1 frame, hiện 1 frame
+            if int((time.time() - self.invincible_start) * 10) % 2 == 0:
+                visible = False
+        if visible:
+            if self.is_jumping:
+                img = self.sprite_jump
+                offset_x, offset_y = self.frame_offset_jump
+            elif self.is_falling:
+                img = self.sprite_fall
+                offset_x, offset_y = self.frame_offset_fall
+            elif self.is_walking:
+                img = self.sprites_walk[self.current_frame]
+                offset_x, offset_y = self.frame_offsets_walk[self.current_frame]
+            else:
+                img = self.sprites_stand[self.current_frame]
+                offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
+            draw_x = self.rect.x + offset_x
+            draw_y = self.rect.y + offset_y
+            if not self.facing_right:
+                img = pygame.transform.flip(img, True, False)
+            screen.blit(img, (draw_x, draw_y))
 
         font = pygame.font.SysFont(None, 32)
         health_text = font.render(f'HP: {self.health}', True, (255, 255, 255))
