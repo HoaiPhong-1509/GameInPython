@@ -1,8 +1,9 @@
 import os
 import pygame
 
-class Enemy:
+class Enemy(pygame.sprite.Sprite):
     def __init__(self, position, health, move_range=None):
+        super().__init__()
         self.rect = pygame.Rect(position[0], position[1], 60, 60)
         self.direction = 1
         self.move_range = move_range
@@ -37,20 +38,72 @@ class Enemy:
         self.knockback = 0  # Số pixel bị đẩy lùi còn lại
         self.knockback_dir = 0  # Hướng đẩy lùi
 
-    def update(self):
+        # Physics
+        self.vel_y = 0
+        self.on_ground = False
+
+    def update(self, platforms=None):
         # Xử lý knockback trước khi di chuyển bình thường
         if self.knockback > 0:
-            self.rect.x += self.knockback_dir * 6  # tốc độ đẩy lùi, chỉnh tùy ý
+            self.rect.x += self.knockback_dir * 6
             self.knockback -= 1
         else:
-            # Di chuyển kẻ địch bình thường
-            self.rect.x += self.direction * self.speed
-            if self.move_range:
-                if self.rect.left < self.move_range[0] or self.rect.right > self.move_range[1]:
-                    self.direction *= -1
+            # CHỈ di chuyển ngang và kiểm tra move_range khi đang đứng trên platform
+            if self.on_ground:
+                self.rect.x += self.direction * self.speed
+
+                if self.move_range:
+                    # Nếu vượt ra khỏi move_range thì đảo hướng, KHÔNG ép vị trí
+                    if self.rect.left < self.move_range[0]:
+                        self.direction = 1
+                    elif self.rect.right > self.move_range[1]:
+                        self.direction = -1
+                else:
+                    # Nếu không có move_range, chỉ đảo hướng khi chạm mép màn hình
+                    if self.rect.left < 0:
+                        self.direction = 1
+                    elif self.rect.right > 800:
+                        self.direction = -1
+
+        # Áp dụng trọng lực
+        self.vel_y += 0.8
+        if self.vel_y > 10:
+            self.vel_y = 10
+
+        self.rect.y += int(self.vel_y)
+        self.on_ground = False
+
+        # Xác định platform đất chính (y lớn nhất, width >= 800)
+        ground_platform = None
+        if platforms:
+            for plat in platforms:
+                if plat.rect.width >= 800:
+                    ground_platform = plat
+                    break
+
+        # Kiểm tra va chạm với platform
+        standing_on_ground = False
+        if platforms:
+            for plat in platforms:
+                if self.rect.colliderect(plat.rect):
+                    if self.vel_y > 0 and self.rect.bottom - plat.rect.top < 20:
+                        self.rect.bottom = plat.rect.top
+                        self.vel_y = 0
+                        self.on_ground = True
+                        # Nếu đứng trên platform đất chính thì bỏ move_range
+                        if ground_platform and plat == ground_platform:
+                            standing_on_ground = True
+                        break  # Đã đứng trên 1 platform thì không cần kiểm tra tiếp
+
+        # Nếu đang đứng trên đất chính thì bỏ move_range, cho đi tự do
+        if standing_on_ground:
+            self.move_range = None
+        else:
+            # Nếu enemy có move_range gốc thì giữ lại, tránh bị mất khi nhảy lên lại platform
+            if hasattr(self, "original_move_range"):
+                self.move_range = self.original_move_range
             else:
-                if self.rect.left < 0 or self.rect.right > 800:
-                    self.direction *= -1
+                self.original_move_range = self.move_range
 
         # Cập nhật hoạt ảnh (chậm, cố định)
         self.animation_timer += self.animation_speed

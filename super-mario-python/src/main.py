@@ -148,12 +148,11 @@ def main():
             for item in items:
                 item.update()
 
-            for enemy in enemies[:]:  # Dùng [:] để tránh lỗi khi remove trong vòng lặp
-                enemy.update()
+            for enemy in enemies[:]:
+                enemy.update(level.platforms)
                 # Kiểm tra va chạm với hitbox tấn công
                 if player.is_attacking and player.attack_hitbox and enemy.rect.colliderect(player.attack_hitbox):
-                    if id(enemy) not in player.already_hit_enemies:
-                        # Xác định hướng knockback: enemy bên phải thì đẩy phải, bên trái thì đẩy trái
+                    if id(enemy) not in player.already_hit_enemies and not enemy.invincible:
                         knockback_dir = 1 if player.facing_right else -1
                         enemy.take_damage(20, knockback_dir)
                         player.already_hit_enemies.add(id(enemy))
@@ -162,7 +161,6 @@ def main():
                     continue
                 if player.rect.colliderect(enemy.rect):
                     player.take_damage(20)
-                    enemy.take_damage(20)
 
             level.update()
 
