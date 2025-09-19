@@ -26,15 +26,22 @@ class Player:
         self.special_timer = 0
         self.special_direction = 1
 
-        # Thêm thuộc tính cho sprite
-        self.sprites = []
+        # Sprite sheet
+        self.sprites_walk = []
+        self.sprites_stand = []
+        self.bboxes_walk = []
+        self.bboxes_stand = []
+        self.frame_offsets_walk = []
+        self.frame_offsets_stand = []
+
         self.load_sprites()
         self.current_frame = 0
         self.frame_counter = 0
         self.frame_speed = 6
+        self.is_walking = False
 
-        # Cập nhật lại rect và hitbox cho khớp sprite
-        self.image = self.sprites[0]
+        # Mặc định là đứng yên
+        self.image = self.sprites_stand[0]
         self.rect = self.image.get_rect(topleft=(x, y))
         self.width = self.image.get_width()
         self.height = self.image.get_height()
@@ -42,53 +49,62 @@ class Player:
 
     def load_sprites(self):
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "Character")
-        sheet_path = os.path.join(assets_dir, "Characters-walk.png")
-        sheet = pygame.image.load(sheet_path).convert_alpha()
+        # Walk sheet
+        walk_path = os.path.join(assets_dir, "Characters-walk.png")
+        walk_sheet = pygame.image.load(walk_path).convert_alpha()
+        # Stand sheet
+        stand_path = os.path.join(assets_dir, "Characters-stand.png")
+        stand_sheet = pygame.image.load(stand_path).convert_alpha()
 
-        num_frames = 6
-        frame_width = sheet.get_width() // num_frames
-        frame_height = sheet.get_height()
+        num_frames_walk = 6
+        num_frames_stand = 6
+        frame_width_walk = walk_sheet.get_width() // num_frames_walk
+        frame_height_walk = walk_sheet.get_height()
+        frame_width_stand = stand_sheet.get_width() // num_frames_stand
+        frame_height_stand = stand_sheet.get_height()
 
         target_height = 55
-        self.sprites = []
-        self.bboxes = []
-        self.frame_offsets = []
-
-        for i in range(num_frames):
-            crop_width = frame_width - 20  # Số pixel muốn trừ
-            frame = sheet.subsurface((i * frame_width, 0, crop_width, frame_height))
-
-            # Tìm vùng pixel có màu
+        # Walk frames
+        for i in range(num_frames_walk):
+            crop_width = frame_width_walk - 20
+            frame = walk_sheet.subsurface((i * frame_width_walk, 0, crop_width, frame_height_walk))
             mask = pygame.mask.from_surface(frame)
             rects = mask.get_bounding_rects()
             bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
-
-            # Cắt vùng có màu
             cropped_frame = frame.subsurface(bbox)
-
-            # Scale theo chiều cao chuẩn
             scale_ratio = target_height / cropped_frame.get_height()
             new_width = int(cropped_frame.get_width() * scale_ratio)
             scaled_frame = pygame.transform.scale(cropped_frame, (new_width, target_height))
-
-            # Lưu sprite đã scale
-            self.sprites.append(scaled_frame)
-
-            # Bbox sau khi scale
+            self.sprites_walk.append(scaled_frame)
             scaled_bbox = pygame.Rect(0, 0, new_width, target_height)
-            self.bboxes.append(scaled_bbox)
-
-            # Offset để căn giữa sprite trên khung 48x55
+            self.bboxes_walk.append(scaled_bbox)
             offset_x = (self.width - new_width) // 2
             offset_y = 0
-            self.frame_offsets.append((offset_x, offset_y))
+            self.frame_offsets_walk.append((offset_x, offset_y))
+        # Stand frames
+        for i in range(num_frames_stand):
+            crop_width = frame_width_stand - 20
+            frame = stand_sheet.subsurface((i * frame_width_stand, 0, crop_width, frame_height_stand))
+            mask = pygame.mask.from_surface(frame)
+            rects = mask.get_bounding_rects()
+            bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+            cropped_frame = frame.subsurface(bbox)
+            scale_ratio = target_height / cropped_frame.get_height()
+            new_width = int(cropped_frame.get_width() * scale_ratio)
+            scaled_frame = pygame.transform.scale(cropped_frame, (new_width, target_height))
+            self.sprites_stand.append(scaled_frame)
+            scaled_bbox = pygame.Rect(0, 0, new_width, target_height)
+            self.bboxes_stand.append(scaled_bbox)
+            offset_x = (self.width - new_width) // 2
+            offset_y = 0
+            self.frame_offsets_stand.append((offset_x, offset_y))
 
         # Cập nhật rect ban đầu
-        self.image = self.sprites[0]
+        self.image = self.sprites_stand[0]
         self.rect = self.image.get_rect(topleft=(self.rect.x, self.rect.y))
         self.width = self.image.get_width()
         self.height = target_height
-        self.bbox = self.bboxes[0]
+        self.bbox = self.bboxes_stand[0]
         self.hitbox = self.rect.copy()
 
     def update(self, platforms):
@@ -175,13 +191,19 @@ class Player:
 
         # Cập nhật frame khi di chuyển
         moving = dx != 0
+        self.is_walking = moving
         if moving:
+            self.frame_speed = 6  # tốc độ mặc định khi đi bộ
             self.frame_counter += 1
             if self.frame_counter >= self.frame_speed:
-                self.current_frame = (self.current_frame + 1) % len(self.sprites)
+                self.current_frame = (self.current_frame + 1) % len(self.sprites_walk)
                 self.frame_counter = 0
         else:
-            self.current_frame = 0  # frame đứng yên
+            self.frame_speed = 7  # tăng lên để idle chậm hơn (gợi ý: 18 hoặc lớn hơn)
+            self.frame_counter += 1
+            if self.frame_counter >= self.frame_speed:
+                self.current_frame = (self.current_frame + 1) % len(self.sprites_stand)
+                self.frame_counter = 0
 
         # Cập nhật hướng
         if dx > 0:
@@ -191,12 +213,16 @@ class Player:
 
         # Giữ nguyên midbottom khi đổi frame
         old_midbottom = self.rect.midbottom
-        self.image = self.sprites[self.current_frame]
+        if self.is_walking:
+            self.image = self.sprites_walk[self.current_frame]
+            self.bbox = self.bboxes_walk[self.current_frame]
+            offset_x, offset_y = self.frame_offsets_walk[self.current_frame]
+        else:
+            self.image = self.sprites_stand[self.current_frame]
+            self.bbox = self.bboxes_stand[self.current_frame]
+            offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
         self.rect = self.image.get_rect()
         self.rect.midbottom = old_midbottom
-
-        self.bbox = self.bboxes[self.current_frame]
-        offset_x, offset_y = self.frame_offsets[self.current_frame]
 
         # Hitbox căn giữa sprite trên khung 48x55
         hitbox_x = self.rect.x + offset_x
@@ -229,8 +255,12 @@ class Player:
 
     def render(self, screen):
         # Vẽ frame hiện tại, lật nếu quay trái
-        img = self.sprites[self.current_frame]
-        offset_x, offset_y = self.frame_offsets[self.current_frame]
+        if self.is_walking:
+            img = self.sprites_walk[self.current_frame]
+            offset_x, offset_y = self.frame_offsets_walk[self.current_frame]
+        else:
+            img = self.sprites_stand[self.current_frame]  # <-- Sửa lại dùng frame hiện tại
+            offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
         draw_x = self.rect.x + offset_x
         draw_y = self.rect.y + offset_y
         if not self.facing_right:
