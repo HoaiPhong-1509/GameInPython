@@ -29,22 +29,40 @@ class Enemy:
         self.animation_timer = 0
         self.animation_speed = 0.05  # chỉnh nhỏ hơn thì hoạt ảnh chậm hơn
 
+        # Trạng thái bất tử
+        self.invincible = False
+        self.invincible_timer = 0
+
+        # Knockback
+        self.knockback = 0  # Số pixel bị đẩy lùi còn lại
+        self.knockback_dir = 0  # Hướng đẩy lùi
+
     def update(self):
-        # Di chuyển kẻ địch
-        self.rect.x += self.direction * self.speed
-        if self.move_range:
-            if self.rect.left < self.move_range[0] or self.rect.right > self.move_range[1]:
-                self.direction *= -1
+        # Xử lý knockback trước khi di chuyển bình thường
+        if self.knockback > 0:
+            self.rect.x += self.knockback_dir * 6  # tốc độ đẩy lùi, chỉnh tùy ý
+            self.knockback -= 1
         else:
-            if self.rect.left < 0 or self.rect.right > 800:
-                self.direction *= -1
+            # Di chuyển kẻ địch bình thường
+            self.rect.x += self.direction * self.speed
+            if self.move_range:
+                if self.rect.left < self.move_range[0] or self.rect.right > self.move_range[1]:
+                    self.direction *= -1
+            else:
+                if self.rect.left < 0 or self.rect.right > 800:
+                    self.direction *= -1
 
         # Cập nhật hoạt ảnh (chậm, cố định)
         self.animation_timer += self.animation_speed
         if self.animation_timer >= 1:
             self.animation_timer = 0
             self.current_frame = (self.current_frame + 1) % len(self.frames_right)
-        pass
+        
+        # Cập nhật trạng thái bất tử
+        if self.invincible:
+            self.invincible_timer -= 1
+            if self.invincible_timer <= 0:
+                self.invincible = False
 
     def render(self, screen):
         if self.direction > 0:
@@ -52,3 +70,12 @@ class Enemy:
         else:
             frame = self.frames_left[self.current_frame]
         screen.blit(frame, self.rect)
+
+    def take_damage(self, amount, knockback_dir=0):
+        if not self.invincible:
+            self.health -= amount
+            self.invincible = True
+            self.invincible_timer = 10  # bất tử 10 frame sau khi bị đánh
+            if knockback_dir != 0:
+                self.knockback = 8  # số frame bị đẩy lùi, chỉnh tùy ý
+                self.knockback_dir = knockback_dir

@@ -39,12 +39,29 @@ class Player:
         self.bbox_fall = None
         self.frame_offset_jump = (0, 0)
         self.frame_offset_fall = (0, 0)
+        self.sprites_attack1 = []
+        self.bboxes_attack1 = []
+        self.frame_offsets_attack1 = []
+        self.sprites_attack2 = []
+        self.bboxes_attack2 = []
+        self.frame_offsets_attack2 = []
+        self.is_attacking = False
+        self.attack_frame = 0
+        self.attack_timer = 0
+        self.attack_hitbox = None
+        self.attack_stage = 0  # 0: chưa tấn công, 1: đã tấn công lần 1, chờ lần 2
+        self.attack_wait_timer = 0  # Đếm thời gian chờ nhấn lần 2
+        self.attack_frame_speed = 8  # Giá trị càng lớn thì chuyển frame attack càng chậm
+        self.attack_first_frame_speed = 24  # giữ frame 2 lâu hơn, khoảng 0.4 giây ở 60 FPS
+        self.attack_anim_counter = 0  # Đếm frame cho attack
 
         self.load_sprites()
         self.current_frame = 0
         self.frame_counter = 0
         self.frame_speed = 6
         self.is_walking = False
+        self.is_jumping = False   # Thêm dòng này
+        self.is_falling = False   # Thêm dòng này
 
         # Mặc định là đứng yên
         self.image = self.sprites_stand[0]
@@ -52,6 +69,8 @@ class Player:
         self.width = self.image.get_width()
         self.height = self.image.get_height()
         self.hitbox = self.rect.copy()
+        self.attack_queued = False
+        self.already_hit_enemies = set()  # Thêm dòng này
 
     def load_sprites(self):
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "Character")
@@ -67,13 +86,22 @@ class Player:
         # Fall sprite
         fall_path = os.path.join(assets_dir, "Characters-fall.png")
         fall_img = pygame.image.load(fall_path).convert_alpha()
+        # Martial/attack sheet 1
+        martial1_path = os.path.join(assets_dir, "Characters-martial1.png")
+        martial1_sheet = pygame.image.load(martial1_path).convert_alpha()
+        # Martial/attack sheet 2
+        martial2_path = os.path.join(assets_dir, "Characters-martial2.png")
+        martial2_sheet = pygame.image.load(martial2_path).convert_alpha()
 
         num_frames_walk = 6
         num_frames_stand = 6
+        num_frames_attack = 6  # Số frame của animation tấn công, chỉnh theo sprite của bạn
         frame_width_walk = walk_sheet.get_width() // num_frames_walk
         frame_height_walk = walk_sheet.get_height()
         frame_width_stand = stand_sheet.get_width() // num_frames_stand
         frame_height_stand = stand_sheet.get_height()
+        frame_width_attack = martial1_sheet.get_width() // num_frames_attack
+        frame_height_attack = martial1_sheet.get_height()
 
         target_height = 55
         # Walk frames
@@ -110,6 +138,39 @@ class Player:
             offset_x = (self.width - new_width) // 2
             offset_y = 0
             self.frame_offsets_stand.append((offset_x, offset_y))
+        # Attack frames 1 (chỉ còn 1 ảnh, không phải sprite sheet)
+        frame = martial1_sheet
+        mask = pygame.mask.from_surface(frame)
+        rects = mask.get_bounding_rects()
+        bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+        cropped_frame = frame.subsurface(bbox)
+        scale_ratio = 55 / cropped_frame.get_height()
+        new_width = int(cropped_frame.get_width() * scale_ratio)
+        scaled_frame = pygame.transform.scale(cropped_frame, (new_width, 55))
+        self.sprites_attack1 = [scaled_frame]
+        self.bboxes_attack1 = [pygame.Rect(0, 0, new_width, 55)]
+        offset_x = (self.width - new_width) // 2
+        offset_y = 0
+        self.frame_offsets_attack1 = [(offset_x, offset_y)]
+        # Attack frames 2
+        frame_width_attack2 = martial2_sheet.get_width() // num_frames_attack
+        frame_height_attack2 = martial2_sheet.get_height()
+        for i in range(num_frames_attack):
+            crop_width = frame_width_attack2
+            frame = martial2_sheet.subsurface((i * frame_width_attack2, 0, crop_width, frame_height_attack2))
+            mask = pygame.mask.from_surface(frame)
+            rects = mask.get_bounding_rects()
+            bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+            cropped_frame = frame.subsurface(bbox)
+            scale_ratio = 55 / cropped_frame.get_height()
+            new_width = int(cropped_frame.get_width() * scale_ratio)
+            scaled_frame = pygame.transform.scale(cropped_frame, (new_width, 55))
+            self.sprites_attack2.append(scaled_frame)
+            scaled_bbox = pygame.Rect(0, 0, new_width, 55)
+            self.bboxes_attack2.append(scaled_bbox)
+            offset_x = (self.width - new_width) // 2
+            offset_y = 0
+            self.frame_offsets_attack2.append((offset_x, offset_y))
 
         # Jump sprite
         mask = pygame.mask.from_surface(jump_img)
@@ -232,7 +293,8 @@ class Player:
             if self.frame_counter >= self.frame_speed:
                 self.current_frame = (self.current_frame + 1) % len(self.sprites_walk)
                 self.frame_counter = 0
-        else:
+        # Chỉ cập nhật frame idle nếu KHÔNG ở trạng thái khác
+        elif not (self.is_attacking or self.is_jumping or self.is_falling):
             self.frame_speed = 7  # tăng lên để idle chậm hơn (gợi ý: 18 hoặc lớn hơn)
             self.frame_counter += 1
             if self.frame_counter >= self.frame_speed:
@@ -281,6 +343,41 @@ class Player:
             self.bbox.height
         )
 
+        # Xử lý tấn công
+        if self.is_attacking:
+            self.attack_timer -= 1
+            if self.attack_stage == 1:
+                # Nếu đã queue đòn 2 thì chuyển luôn sang đòn 2
+                if self.attack_queued:
+                    self.is_attacking = True
+                    self.attack_frame = 2
+                    self.attack_anim_counter = 0
+                    self.attack_timer = (len(self.sprites_attack2) - 2) * self.attack_frame_speed
+                    self.attack_stage = 2
+                    self.update_attack_hitbox()
+                    self.attack_queued = False
+                elif self.attack_timer <= 0:
+                    self.is_attacking = False
+                    self.attack_hitbox = None
+            elif self.attack_stage == 2:
+                self.attack_anim_counter += 1
+                if self.attack_anim_counter >= self.attack_frame_speed:
+                    self.attack_frame += 1
+                    self.attack_anim_counter = 0
+                    if self.attack_frame < len(self.sprites_attack2):
+                        self.update_attack_hitbox()
+                if self.attack_frame >= len(self.sprites_attack2) or self.attack_timer <= 0:
+                    self.is_attacking = False
+                    self.attack_hitbox = None
+                    self.attack_stage = 0  # reset combo
+        else:
+            # Nếu vừa xong lần 1, chờ nhấn lần 2
+            if self.attack_stage == 1 and self.attack_wait_timer > 0:
+                self.attack_wait_timer -= 1
+                if self.attack_wait_timer == 0:
+                    self.attack_stage = 0  # hết thời gian chờ, reset combo
+            self.attack_queued = False  # reset queue nếu không còn tấn công
+
     def take_damage(self, amount):
         if not self.invincible:
             self.health -= amount
@@ -288,11 +385,32 @@ class Player:
             self.invincible_start = time.time()
 
     def attack(self):
-        from game.projectile import Projectile
-        # Đạn xuất phát từ giữa nhân vật
-        proj = Projectile(self.rect.centerx, self.rect.centery, self.direction)
-        self.projectiles.append(proj)
-    
+        if not self.is_attacking and self.attack_stage == 0:
+            # Đòn đánh lần 1: chỉ frame 2 (index 1)
+            self.is_attacking = True
+            self.attack_frame = 1
+            self.attack_anim_counter = 0
+            self.attack_timer = self.attack_first_frame_speed
+            self.attack_stage = 1
+            self.attack_wait_timer = 15  # cho phép nhấn lần 2 trong 15 frame (~0.25s)
+            self.update_attack_hitbox()
+            self.already_hit_enemies = set()  # Reset mỗi lần tấn công mới
+        elif self.attack_stage == 1 and self.attack_wait_timer > 0:
+            self.attack_queued = True
+            self.already_hit_enemies = set()  # Reset khi combo
+
+    def update_attack_hitbox(self):
+        # Tạo hitbox tấn công phía trước nhân vật, tùy theo hướng
+        direction = 1 if self.facing_right else -1
+        width = 28   # Giảm độ rộng hitbox tấn công
+        height = 30  # Giảm chiều cao hitbox tấn công
+        if direction == 1:
+            x = self.rect.right
+        else:
+            x = self.rect.left - width
+        y = self.rect.centery - height // 2
+        self.attack_hitbox = pygame.Rect(x, y, width, height)
+
     def special_attack(self):
         self.energy = 0  # Reset nộ
         self.special_active = True
@@ -307,7 +425,17 @@ class Player:
             if int((time.time() - self.invincible_start) * 10) % 2 == 0:
                 visible = False
         if visible:
-            if self.is_jumping:
+            if self.is_attacking:
+                if self.attack_stage == 1:
+                    img = self.sprites_attack1[min(self.attack_frame, len(self.sprites_attack1)-1)]
+                    offset_x, offset_y = self.frame_offsets_attack1[min(self.attack_frame, len(self.frame_offsets_attack1)-1)]
+                elif self.attack_stage == 2:
+                    img = self.sprites_attack2[min(self.attack_frame, len(self.sprites_attack2)-1)]
+                    offset_x, offset_y = self.frame_offsets_attack2[min(self.attack_frame, len(self.frame_offsets_attack2)-1)]
+                else:
+                    img = self.sprites_stand[self.current_frame]
+                    offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
+            elif self.is_jumping:
                 img = self.sprite_jump
                 offset_x, offset_y = self.frame_offset_jump
             elif self.is_falling:
@@ -373,3 +501,6 @@ class Player:
 
         # Vẽ hitbox để kiểm tra
         pygame.draw.rect(screen, (255, 0, 0), self.hitbox, 2)
+        # Vẽ hitbox tấn công để debug
+        if self.attack_hitbox:
+            pygame.draw.rect(screen, (255, 255, 0), self.attack_hitbox, 2)

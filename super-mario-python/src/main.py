@@ -7,7 +7,6 @@ from game.item import Item
 from game.projectile import Projectile
 import os
 
-
 # Initialize Pygame
 pygame.init()
 
@@ -100,12 +99,13 @@ def draw_game_over(screen):
     screen.blit(text_retry, retry_rect)
     return retry_rect
 
-
 def main():
     global current_level, level, enemies, player, items
     attack_cooldown = 0
     game_over = False
+    retry_rect = None
     while True:
+        # Xử lý sự kiện trước khi update game state
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -120,6 +120,10 @@ def main():
                         player = Player(100, 400)
                         enemies = reset_enemies_for_level(current_level)
                         game_over = False
+            else:
+                # Xử lý nhấn phím Z để tấn công combo
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_z:
+                    player.attack()
 
         if not game_over:
             # Update game state
@@ -144,10 +148,21 @@ def main():
             for item in items:
                 item.update()
 
-            for enemy in enemies:
+            for enemy in enemies[:]:  # Dùng [:] để tránh lỗi khi remove trong vòng lặp
                 enemy.update()
+                # Kiểm tra va chạm với hitbox tấn công
+                if player.is_attacking and player.attack_hitbox and enemy.rect.colliderect(player.attack_hitbox):
+                    if id(enemy) not in player.already_hit_enemies:
+                        # Xác định hướng knockback: enemy bên phải thì đẩy phải, bên trái thì đẩy trái
+                        knockback_dir = 1 if player.facing_right else -1
+                        enemy.take_damage(20, knockback_dir)
+                        player.already_hit_enemies.add(id(enemy))
+                        if enemy.health <= 0:
+                            enemies.remove(enemy)
+                    continue
                 if player.rect.colliderect(enemy.rect):
                     player.take_damage(20)
+                    enemy.take_damage(20)
 
             level.update()
 
@@ -173,14 +188,6 @@ def main():
             # Chặn mép trái ở map 1
             if current_level == 0 and player.rect.left < 0:
                 player.rect.left = 0
-            
-            keys = pygame.key.get_pressed()
-            if keys[pygame.K_z] and attack_cooldown == 0 and not player.charging:
-                player.attack()
-                attack_cooldown = 15  # 15 frame cooldown
-
-            if attack_cooldown > 0:
-                attack_cooldown -= 1
 
             # Update projectiles
             for proj in player.projectiles:
@@ -197,7 +204,7 @@ def main():
                         if enemy.health <= 0:
                             enemies.remove(enemy)
                         break
-
+            keys = pygame.key.get_pressed()
             if keys[pygame.K_c] and player.energy >= 100 and not player.charging and not player.special_active:
                 player.special_attack()
                 for enemy in enemies:
