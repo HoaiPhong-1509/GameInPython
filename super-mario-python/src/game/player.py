@@ -58,7 +58,7 @@ class Player:
         self.attack2_effect_frames = []
         self.attack1_effect_index = 0
         self.attack2_effect_index = 0
-        self.attack1_effect_timer = 2
+        self.attack1_effect_timer = 1
         self.attack2_effect_timer = 2
 
         self.load_sprites()

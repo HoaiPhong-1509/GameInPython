@@ -5,6 +5,7 @@ from game.enemies import Enemy
 from game.levels import Level
 from game.item import Item
 from game.projectile import Projectile
+from game.coin import Coin  
 import os
 
 # Initialize Pygame
@@ -53,6 +54,7 @@ level_data_list = [
         {'type': 'platform', 'x': 250, 'y': 200, 'width': 120, 'height': 60},    # Bậc cao giữa
         {'type': 'platform', 'x': 450, 'y': 180, 'width': 120, 'height': 30},    
         {'type': 'platform', 'x': 250, 'y': 95, 'width': 40, 'height': 40},     # Hộp vật phẩm ?
+        {'type': 'platform', 'x': 290, 'y': 95, 'width': 40, 'height': 40},
     ]
 ]
 current_level = 0
@@ -60,6 +62,9 @@ level = Level(level_data_list[current_level])
 
 items_per_level = [[] for _ in range(len(level_data_list))]
 items = items_per_level[current_level]
+
+# Lưu trạng thái used cho từng mystery box của mỗi màn
+box_used_per_level = [[] for _ in range(len(level_data_list))]
 
 def reset_enemies_for_level(level_idx):
     if level_idx == 0:
@@ -99,8 +104,28 @@ def draw_game_over(screen):
     screen.blit(text_retry, retry_rect)
     return retry_rect
 
+coin_count = 0  # Thêm biến toàn cục lưu số coin
+
+def restore_box_used(level, level_idx):
+    # Lấy danh sách trạng thái used đã lưu cho màn này
+    used_list = box_used_per_level[level_idx]
+    idx = 0
+    for plat in level.platforms:
+        if plat.rect.width == 40 and plat.rect.height == 40:
+            if idx < len(used_list):
+                plat.used = used_list[idx]
+            idx += 1
+
+def save_box_used(level, level_idx):
+    # Lưu trạng thái used của các mystery box cho màn này
+    used_list = []
+    for plat in level.platforms:
+        if plat.rect.width == 40 and plat.rect.height == 40:
+            used_list.append(getattr(plat, "used", False))
+    box_used_per_level[level_idx] = used_list
+
 def main():
-    global current_level, level, enemies, player, items
+    global current_level, level, enemies, player, items, coin_count
     attack_cooldown = 0
     game_over = False
     retry_rect = None
@@ -120,6 +145,13 @@ def main():
                         player = Player(100, 400)
                         enemies = reset_enemies_for_level(current_level)
                         game_over = False
+
+                        # Reset trạng thái mystery box và item cho tất cả màn
+                        for i in range(len(box_used_per_level)):
+                            box_used_per_level[i] = [False for plat in level_data_list[i] if plat['width'] == 40 and plat['height'] == 40]
+                            items_per_level[i] = []
+                        restore_box_used(level, current_level)
+                        items = items_per_level[current_level]
             else:
                 # Xử lý nhấn phím Z để tấn công combo
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_z:
@@ -139,12 +171,20 @@ def main():
             if player.hit_head and player.last_head_platform:
                 plat = player.last_head_platform
                 if plat.rect.width == 40 and plat.rect.height == 40:
-                    # Chỉ sinh item nếu platform này chưa từng sinh item
+                    items = items_per_level[current_level]
+                    # Lưu lại trạng thái used trước khi sinh item
+                    save_box_used(level, current_level)
+                    # Tìm index của mystery box này trong platforms
                     if not hasattr(plat, "used") or not plat.used:
-                        items.append(Item(plat.rect.centerx - 15, plat.rect.top +10))
+                        if plat.rect.x == 290 and plat.rect.y == 95:
+                            items.append(Coin(plat.rect.centerx - 15, plat.rect.top + 10))
+                        else:
+                            items.append(Item(plat.rect.centerx - 15, plat.rect.top + 10))
                         plat.used = True
+                        save_box_used(level, current_level)  # Lưu lại ngay sau khi dùng
 
             # Update item
+            items = items_per_level[current_level]  # Đảm bảo luôn dùng đúng items list
             for item in items:
                 item.update()
 
@@ -164,22 +204,26 @@ def main():
 
             level.update()
 
-            # Chuyển map nếu player đi qua mép phải
+            # Khi chuyển map:
             if player.rect.right > screen_width:
+                # Lưu trạng thái used trước khi chuyển
+                save_box_used(level, current_level)
                 current_level += 1
                 if current_level >= len(level_data_list):
                     current_level = 0
                 level = Level(level_data_list[current_level])
+                restore_box_used(level, current_level)  # Khôi phục trạng thái used
                 player.rect.x = 0
                 enemies = enemies_per_level[current_level]
                 items = items_per_level[current_level]
 
-            # Khi sang màn trái (nếu có)
             elif player.rect.left < 0 and current_level != 0:
+                save_box_used(level, current_level)
                 current_level -= 1
                 if current_level < 0:
                     current_level = len(level_data_list) - 1
                 level = Level(level_data_list[current_level])
+                restore_box_used(level, current_level)
                 player.rect.x = screen_width - player.rect.width
                 enemies = enemies_per_level[current_level]
                 items = items_per_level[current_level]
@@ -227,11 +271,22 @@ def main():
         player.render(screen)
 
         # Render item SAU CÙNG để luôn nổi lên trên
+        items = items_per_level[current_level]  # Đảm bảo luôn dùng đúng items list
         for item in items:
             item.render(screen)
             if item.active and player.rect.colliderect(item.rect) and not item.rising:
-                player.health = min(player.health + 50, 100)
-                item.active = False
+                # Nếu là Coin thì chỉ cộng điểm, không hồi máu
+                if hasattr(item, "sheet"):
+                    coin_count += 1  # Tăng số coin
+                    item.active = False
+                else:
+                    player.health = min(player.health + 50, 100)
+                    item.active = False
+
+       
+        font = pygame.font.SysFont(None, 32)
+        coin_text = font.render(f"Coin: {coin_count}", True, (255, 215, 0))
+        screen.blit(coin_text, (700, 20))  
 
         retry_rect = None
         if player.health <= 0:
