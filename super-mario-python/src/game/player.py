@@ -54,6 +54,12 @@ class Player:
         self.attack_frame_speed = 8  # Giá trị càng lớn thì chuyển frame attack càng chậm
         self.attack_first_frame_speed = 24  # giữ frame 2 lâu hơn, khoảng 0.4 giây ở 60 FPS
         self.attack_anim_counter = 0  # Đếm frame cho attack
+        self.attack1_effect_frames = []
+        self.attack2_effect_frames = []
+        self.attack1_effect_index = 0
+        self.attack2_effect_index = 0
+        self.attack1_effect_timer = 2
+        self.attack2_effect_timer = 2
 
         self.load_sprites()
         self.current_frame = 0
@@ -378,6 +384,22 @@ class Player:
                     self.attack_stage = 0  # hết thời gian chờ, reset combo
             self.attack_queued = False  # reset queue nếu không còn tấn công
 
+        # Update attack effect animation
+        if self.is_attacking:
+            if self.attack_stage == 1 and self.attack1_effect_timer > 0:
+                self.attack1_effect_timer -= 1
+                if self.attack1_effect_timer % 2 == 0:
+                    self.attack1_effect_index = min(self.attack1_effect_index + 1, 2)
+            if self.attack_stage == 2 and self.attack2_effect_timer > 0:
+                self.attack2_effect_timer -= 1
+                if self.attack2_effect_timer % 2 == 0:
+                    self.attack2_effect_index = min(self.attack2_effect_index + 1, 2)
+        else:
+            self.attack1_effect_index = 0
+            self.attack2_effect_index = 0
+            self.attack1_effect_timer = 0
+            self.attack2_effect_timer = 0
+
     def take_damage(self, amount):
         if not self.invincible:
             self.health -= amount
@@ -395,9 +417,13 @@ class Player:
             self.attack_wait_timer = 15  # cho phép nhấn lần 2 trong 15 frame (~0.25s)
             self.update_attack_hitbox()
             self.already_hit_enemies = set()  # Reset mỗi lần tấn công mới
+            self.attack1_effect_index = 0
+            self.attack1_effect_timer = 6  # 3 frame, mỗi frame 2 tick
         elif self.attack_stage == 1 and self.attack_wait_timer > 0:
             self.attack_queued = True
             self.already_hit_enemies = set()  # Reset khi combo
+            self.attack2_effect_index = 0
+            self.attack2_effect_timer = 6
 
     def update_attack_hitbox(self):
         # Tạo hitbox tấn công phía trước nhân vật, tùy theo hướng
@@ -504,3 +530,46 @@ class Player:
         # Vẽ hitbox tấn công để debug
         if self.attack_hitbox:
             pygame.draw.rect(screen, (255, 255, 0), self.attack_hitbox, 2)
+
+        # Load effect sprites
+        effect_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "effect")
+        # Martial1 effect
+        martial1eff_path = os.path.join(effect_dir, "martial1.png")
+        martial1eff_sheet = pygame.image.load(martial1eff_path).convert_alpha()
+        eff1_w = martial1eff_sheet.get_width() // 3
+        eff1_h = martial1eff_sheet.get_height()
+        self.attack1_effect_frames = []
+        for i in range(3):
+            frame = martial1eff_sheet.subsurface((i * eff1_w, 0, eff1_w, eff1_h))
+            # Scale effect frame nhỏ lại, ví dụ cao 40px
+            scale_h = 100
+            scale_w = int(frame.get_width() * (scale_h / frame.get_height()))
+            frame = pygame.transform.scale(frame, (scale_w, scale_h))
+            self.attack1_effect_frames.append(frame)
+        # Martial2 effect
+        martial2eff_path = os.path.join(effect_dir, "martial2.png")
+        martial2eff_sheet = pygame.image.load(martial2eff_path).convert_alpha()
+        eff2_w = martial2eff_sheet.get_width() // 3
+        eff2_h = martial2eff_sheet.get_height()
+        self.attack2_effect_frames = []
+        for i in range(3):
+            frame = martial2eff_sheet.subsurface((i * eff2_w, 0, eff2_w, eff2_h))
+            scale_h = 40
+            scale_w = int(frame.get_width() * (scale_h / frame.get_height()))
+            frame = pygame.transform.scale(frame, (scale_w, scale_h))
+            self.attack2_effect_frames.append(frame)
+
+        # Vẽ hiệu ứng đòn đánh
+        if self.attack_hitbox:
+            if self.is_attacking and self.attack_stage == 1 and self.attack1_effect_index < len(self.attack1_effect_frames):
+                eff_img = self.attack1_effect_frames[self.attack1_effect_index]
+                eff_rect = eff_img.get_rect(center=self.attack_hitbox.center)
+                if not self.facing_right:
+                    eff_img = pygame.transform.flip(eff_img, True, False)
+                screen.blit(eff_img, eff_rect)
+            if self.is_attacking and self.attack_stage == 2 and self.attack2_effect_index < len(self.attack2_effect_frames):
+                eff_img = self.attack2_effect_frames[self.attack2_effect_index]
+                eff_rect = eff_img.get_rect(center=self.attack_hitbox.center)
+                if not self.facing_right:
+                    eff_img = pygame.transform.flip(eff_img, True, False)
+                screen.blit(eff_img, eff_rect)
