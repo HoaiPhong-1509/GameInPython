@@ -111,11 +111,6 @@ class Enemy(pygame.sprite.Sprite):
             self.animation_timer = 0
             self.current_frame = (self.current_frame + 1) % len(self.frames_right)
         
-        # Cập nhật trạng thái bất tử
-        if self.invincible:
-            self.invincible_timer -= 1
-            if self.invincible_timer <= 0:
-                self.invincible = False
 
     def render(self, screen):
         if self.direction > 0:
@@ -124,11 +119,8 @@ class Enemy(pygame.sprite.Sprite):
             frame = self.frames_left[self.current_frame]
         screen.blit(frame, self.rect)
 
-    def take_damage(self, amount, knockback_dir=0):
-        if not self.invincible:
+    def take_damage(self, amount, knockback_dir=0):       
             self.health -= amount
-            self.invincible = True
-            self.invincible_timer = 10  # bất tử 10 frame sau khi bị đánh
             if knockback_dir != 0:
                 self.knockback = 8  # số frame bị đẩy lùi, chỉnh tùy ý
                 self.knockback_dir = knockback_dir

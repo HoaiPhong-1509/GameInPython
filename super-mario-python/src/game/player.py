@@ -51,8 +51,8 @@ class Player:
         self.attack_hitbox = None
         self.attack_stage = 0  # 0: chưa tấn công, 1: đã tấn công lần 1, chờ lần 2
         self.attack_wait_timer = 0  # Đếm thời gian chờ nhấn lần 2
-        self.attack_frame_speed = 8  # Giá trị càng lớn thì chuyển frame attack càng chậm
-        self.attack_first_frame_speed = 24  # giữ frame 2 lâu hơn, khoảng 0.4 giây ở 60 FPS
+        self.attack_frame_speed = 6 # Giá trị càng lớn thì chuyển frame attack càng chậm
+        self.attack_first_frame_speed = 18  # giữ frame 2 lâu hơn, khoảng 0.4 giây ở 60 FPS
         self.attack_anim_counter = 0  # Đếm frame cho attack
         self.attack1_effect_frames = []
         self.attack2_effect_frames = []
@@ -60,6 +60,18 @@ class Player:
         self.attack2_effect_index = 0
         self.attack1_effect_timer = 1
         self.attack2_effect_timer = 2
+        self.weapon_type = "Martial"  # Thêm dòng này, mặc định
+
+        # Machate attack
+        self.machate_sprites = [[] for _ in range(4)]
+        self.machate_bboxes = [[] for _ in range(4)]
+        self.machate_offsets = [[] for _ in range(4)]
+        self.machate_attack_frame = 0
+        self.machate_attack_stage = 0  # 0: chưa tấn công, 1-4: đang ở đòn thứ mấy
+        self.machate_attack_timer = 0
+        self.machate_attack_anim_counter = 0
+        self.machate_attack_queued = [False]*4
+        self.machate_hitbox_timer = 0  # Thêm biến này
 
         self.load_sprites()
         self.current_frame = 0
@@ -76,7 +88,8 @@ class Player:
         self.height = self.image.get_height()
         self.hitbox = self.rect.copy()
         self.attack_queued = False
-        self.already_hit_enemies = set()  # Thêm dòng này
+        self.already_hit_enemies = set()  # Thay đổi thành dict bên dưới
+        self.attack_key_held = False  # Thêm dòng này
 
     def load_sprites(self):
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "Character")
@@ -98,6 +111,15 @@ class Player:
         # Martial/attack sheet 2
         martial2_path = os.path.join(assets_dir, "Characters-martial2.png")
         martial2_sheet = pygame.image.load(martial2_path).convert_alpha()
+        # Shield attack sheet
+        shield_path = os.path.join(assets_dir, "Characters-shield.png")
+        self.shield_sheet = pygame.image.load(shield_path).convert_alpha()
+
+        # Machate attack sheets
+        self.machate_sheets = []
+        for i in range(1, 5):
+            path = os.path.join(assets_dir, f"Characters-machete{i}.png")  
+            self.machate_sheets.append(pygame.image.load(path).convert_alpha())
 
         num_frames_walk = 6
         num_frames_stand = 6
@@ -144,7 +166,8 @@ class Player:
             offset_x = (self.width - new_width) // 2
             offset_y = 0
             self.frame_offsets_stand.append((offset_x, offset_y))
-        # Attack frames 1 (chỉ còn 1 ảnh, không phải sprite sheet)
+        # Attack frames 1 (Martial)
+        # (chỉ còn 1 ảnh, không phải sprite sheet)
         frame = martial1_sheet
         mask = pygame.mask.from_surface(frame)
         rects = mask.get_bounding_rects()
@@ -158,7 +181,7 @@ class Player:
         offset_x = (self.width - new_width) // 2
         offset_y = 0
         self.frame_offsets_attack1 = [(offset_x, offset_y)]
-        # Attack frames 2
+        # Attack frames 2 (Martial)
         frame_width_attack2 = martial2_sheet.get_width() // num_frames_attack
         frame_height_attack2 = martial2_sheet.get_height()
         for i in range(num_frames_attack):
@@ -177,6 +200,29 @@ class Player:
             offset_x = (self.width - new_width) // 2
             offset_y = 0
             self.frame_offsets_attack2.append((offset_x, offset_y))
+        # Attack frames cho Shield
+        num_frames_shield = 4
+        frame_width_shield = self.shield_sheet.get_width() // num_frames_shield
+        frame_height_shield = self.shield_sheet.get_height()
+        self.sprites_shield_attack = []
+        self.bboxes_shield_attack = []
+        self.frame_offsets_shield_attack = []
+        for i in range(num_frames_shield):
+            crop_width = frame_width_shield
+            frame = self.shield_sheet.subsurface((i * frame_width_shield, 0, crop_width, frame_height_shield))
+            mask = pygame.mask.from_surface(frame)
+            rects = mask.get_bounding_rects()
+            bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+            cropped_frame = frame.subsurface(bbox)
+            scale_ratio = 55 / cropped_frame.get_height()
+            new_width = int(cropped_frame.get_width() * scale_ratio)
+            scaled_frame = pygame.transform.scale(cropped_frame, (new_width, 55))
+            self.sprites_shield_attack.append(scaled_frame)
+            scaled_bbox = pygame.Rect(0, 0, new_width, 55)
+            self.bboxes_shield_attack.append(scaled_bbox)
+            offset_x = (self.width - new_width) // 2
+            offset_y = 0
+            self.frame_offsets_shield_attack.append((offset_x, offset_y))
 
         # Jump sprite
         mask = pygame.mask.from_surface(jump_img)
@@ -207,10 +253,122 @@ class Player:
         self.bbox = self.bboxes_stand[0]
         self.hitbox = self.rect.copy()
 
+        # Load Machate frames
+        machate_frames = [5, 5, 5, 7]  # Số frame cho từng đòn
+        target_height = 55
+        for idx, sheet in enumerate(self.machate_sheets):
+            num_frames = machate_frames[idx]
+            frame_width = sheet.get_width() // num_frames
+            frame_height = sheet.get_height()
+            for i in range(num_frames):
+                frame = sheet.subsurface((i * frame_width, 0, frame_width, frame_height))
+                mask = pygame.mask.from_surface(frame)
+                rects = mask.get_bounding_rects()
+                bbox = rects[0] if rects else pygame.Rect(0, 0, frame.get_width(), frame.get_height())
+                cropped_frame = frame.subsurface(bbox)
+                # --- Điều chỉnh riêng từng frame của prite 3 (idx == 2) ---
+                if idx == 2:
+                    if i in [0, 1]:  # frame 1, 2
+                        scale_ratio = 70 / cropped_frame.get_height()
+                        new_height = 70
+                    elif i == 2:     # frame 3
+                        scale_ratio = 95 / cropped_frame.get_height()
+                        new_height = 95
+                    elif i in [3, 4]:  # frame 4, 5
+                        scale_ratio = 58 / cropped_frame.get_height()
+                        new_height = 58
+                    else:
+                        scale_ratio = target_height / cropped_frame.get_height()
+                        new_height = target_height
+                # --- Các sprite khác giữ nguyên như cũ ---
+                elif idx == 1 and i in [0, 1, 3, 4]:
+                    scale_ratio = 55 / cropped_frame.get_height()
+                    new_height = 55
+                elif idx == 1 and i == 2:
+                    scale_ratio = 78 / cropped_frame.get_height()
+                    new_height = 78
+                elif idx in [1, 2]:
+                    scale_ratio = (target_height + 10) / cropped_frame.get_height()
+                    new_height = target_height + 10
+                else:
+                    scale_ratio = target_height / cropped_frame.get_height()
+                    new_height = target_height
+                new_width = int(cropped_frame.get_width() * scale_ratio)
+                scaled_frame = pygame.transform.scale(cropped_frame, (new_width, new_height))
+                self.machate_sprites[idx].append(scaled_frame)
+                scaled_bbox = pygame.Rect(0, 0, new_width, new_height)
+                self.machate_bboxes[idx].append(scaled_bbox)
+                offset_x = (self.width - new_width) // 2
+                # Offset để chân luôn chạm đất
+                if idx == 2:
+                    offset_y = -(new_height - target_height)
+                elif idx == 1 and i in [0, 1]:
+                    offset_y = -(new_height - target_height)
+                elif idx == 1 and i == 2:
+                    offset_y = -(new_height - target_height)
+                elif idx in [1, 2]:
+                    offset_y = -(new_height - target_height)
+                else:
+                    offset_y = 0
+                self.machate_offsets[idx].append((offset_x, offset_y))
+
     def update(self, platforms):
         keys = pygame.key.get_pressed()
         dx = 0
         moving = False
+
+        # --- XỬ LÝ KHÓA HÀNH ĐỘNG KHI ĐANG TẤN CÔNG BẰNG SHIELD ---
+        if self.is_attacking and self.weapon_type == "Shield":
+            # Animation Shield
+            self.attack_anim_counter += 1
+            if self.attack_anim_counter >= self.attack_frame_speed:
+                if self.attack_frame < len(self.sprites_shield_attack) - 1:
+                    self.attack_frame += 1
+                    self.attack_anim_counter = 0
+                    self.update_attack_hitbox()
+            # Nếu đã đến frame cuối
+            if self.attack_frame >= len(self.sprites_shield_attack) - 1:
+                # Nếu đã nhả phím Z thì kết thúc attack
+                if not self.attack_key_held:
+                    self.is_attacking = False
+                    self.attack_hitbox = None
+                    self.attack_stage = 0
+            else:
+                self.attack_timer -= 1
+
+            # Gravity và va chạm nền để không bị treo trên không
+            self.vel_y += 1
+            if self.vel_y > 10:
+                self.vel_y = 10
+            old_y = self.rect.y
+            self.rect.y += self.vel_y
+
+            self.on_ground = False
+            self.hit_head = False
+            self.last_head_platform = None
+
+            for plat in platforms:
+                if self.rect.colliderect(plat.rect):
+                    if self.vel_y > 0 and old_y + self.rect.height <= plat.rect.top + 5:
+                        self.rect.bottom = plat.rect.top
+                        self.vel_y = 0
+                        self.on_ground = True
+                    elif self.vel_y < 0 and old_y >= plat.rect.bottom - 5:
+                        self.rect.top = plat.rect.bottom
+                        self.vel_y = 0
+                        self.hit_head = True
+                        self.last_head_platform = plat
+
+            # Hết bất tử sau 1 giây
+            if self.invincible and (time.time() - self.invincible_start > 1):
+                self.invincible = False
+
+            # Xác định trạng thái nhảy/rơi
+            self.is_jumping = self.vel_y < 0 and not self.on_ground
+            self.is_falling = self.vel_y > 0 and not self.on_ground
+
+            return  # KHÓA HÀNH ĐỘNG KHI ĐANG TẤN CÔNG BẰNG SHIELD
+        # --- HẾT PHẦN SHIELD ---
 
         if keys[pygame.K_LEFT]:
             dx -= 5
@@ -351,38 +509,86 @@ class Player:
 
         # Xử lý tấn công
         if self.is_attacking:
-            self.attack_timer -= 1
-            if self.attack_stage == 1:
-                # Nếu đã queue đòn 2 thì chuyển luôn sang đòn 2
-                if self.attack_queued:
-                    self.is_attacking = True
-                    self.attack_frame = 2
-                    self.attack_anim_counter = 0
-                    self.attack_timer = (len(self.sprites_attack2) - 2) * self.attack_frame_speed
-                    self.attack_stage = 2
-                    self.update_attack_hitbox()
-                    self.attack_queued = False
-                elif self.attack_timer <= 0:
-                    self.is_attacking = False
-                    self.attack_hitbox = None
-            elif self.attack_stage == 2:
+            if self.weapon_type == "Shield":
                 self.attack_anim_counter += 1
                 if self.attack_anim_counter >= self.attack_frame_speed:
                     self.attack_frame += 1
                     self.attack_anim_counter = 0
-                    if self.attack_frame < len(self.sprites_attack2):
+                    if self.attack_frame >= len(self.sprites_shield_attack):
+                        self.is_attacking = False
+                        self.attack_hitbox = None
+                        self.attack_stage = 0
+            elif self.weapon_type == "Machate":
+                self.machate_attack_anim_counter += 1
+                if self.machate_attack_anim_counter >= 9:
+                    self.machate_attack_frame += 1
+                    self.machate_attack_anim_counter = 0
+                    if self.machate_attack_frame < len(self.machate_sprites[self.machate_attack_stage-1]):
                         self.update_attack_hitbox()
-                if self.attack_frame >= len(self.sprites_attack2) or self.attack_timer <= 0:
-                    self.is_attacking = False
+                        self.machate_hitbox_timer = 18  # Reset timer mỗi khi sang frame mới
+                self.machate_attack_timer -= 1
+
+                # Quản lý thời gian tồn tại hitbox
+                if self.machate_hitbox_timer > 0:
+                    self.machate_hitbox_timer -= 1
+                else:
                     self.attack_hitbox = None
-                    self.attack_stage = 0  # reset combo
+
+                # Combo chuyển đòn nếu queue
+                if self.machate_attack_timer <= 0 or self.machate_attack_frame >= len(self.machate_sprites[self.machate_attack_stage-1]):
+                    if self.machate_attack_stage < 4 and self.machate_attack_queued[self.machate_attack_stage]:
+                        self.machate_attack_stage += 1
+                        self.machate_attack_frame = 0
+                        self.machate_attack_anim_counter = 0
+                        self.machate_attack_timer = 20
+                        self.update_attack_hitbox()
+                        self.machate_hitbox_timer = 18  # Reset timer khi sang đòn mới
+                    elif self.machate_attack_stage == 4 and self.machate_attack_frame < len(self.machate_sprites[3]):
+                        pass
+                    else:
+                        self.is_attacking = False
+                        self.attack_hitbox = None
+                        self.machate_attack_stage = 0
+                        self.machate_attack_queued = [False]*4
+            elif self.weapon_type == "Martial":
+                if self.attack_stage == 1:
+                    self.attack_anim_counter += 1
+                    # SỬA DÒNG NÀY: dùng self.attack_first_frame_speed cho lần 1
+                    if self.attack_anim_counter >= self.attack_first_frame_speed:
+                        self.attack_frame += 1
+                        self.attack_anim_counter = 0
+                        if self.attack_frame >= len(self.sprites_attack1):
+                            self.is_attacking = False
+                            self.attack_hitbox = None
+                            # KHÔNG reset attack_stage ở đây, để chờ combo lần 2
+                elif self.attack_stage == 2:
+                    self.attack_anim_counter += 1
+                    # Lần 2 vẫn dùng self.attack_frame_speed như cũ
+                    if self.attack_anim_counter >= self.attack_frame_speed:
+                        self.attack_frame += 1
+                        self.attack_anim_counter = 0
+                        if self.attack_frame >= len(self.sprites_attack2):
+                            self.is_attacking = False
+                            self.attack_hitbox = None
+                            self.attack_stage = 0
+                            self.attack_wait_timer = 0
         else:
             # Nếu vừa xong lần 1, chờ nhấn lần 2
             if self.attack_stage == 1 and self.attack_wait_timer > 0:
                 self.attack_wait_timer -= 1
-                if self.attack_wait_timer == 0:
+                if self.attack_queued:
+                    # Nếu đã nhấn Z lần 2 trong thời gian chờ, chuyển sang đòn 2
+                    self.is_attacking = True
+                    self.attack_stage = 2
+                    self.attack_frame = 0
+                    self.attack_anim_counter = 0
+                    self.attack_timer = len(self.sprites_attack2) * self.attack_frame_speed
+                    self.update_attack_hitbox()
+                    self.attack_queued = False
+                elif self.attack_wait_timer == 0:
                     self.attack_stage = 0  # hết thời gian chờ, reset combo
-            self.attack_queued = False  # reset queue nếu không còn tấn công
+            else:
+                self.attack_queued = False  # reset queue nếu không còn tấn công
 
         # Update attack effect animation
         if self.is_attacking:
@@ -407,25 +613,55 @@ class Player:
             self.invincible_start = time.time()
 
     def attack(self):
-        if not self.is_attacking and self.attack_stage == 0:
-            # Đòn đánh lần 1: chỉ frame 2 (index 1)
-            self.is_attacking = True
-            self.attack_frame = 1
-            self.attack_anim_counter = 0
-            self.attack_timer = self.attack_first_frame_speed
-            self.attack_stage = 1
-            self.attack_wait_timer = 15  # cho phép nhấn lần 2 trong 15 frame (~0.25s)
-            self.update_attack_hitbox()
-            self.already_hit_enemies = set()  # Reset mỗi lần tấn công mới
-            self.attack1_effect_index = 0
-            self.attack1_effect_timer = 6  # 3 frame, mỗi frame 2 tick
-        elif self.attack_stage == 1 and self.attack_wait_timer > 0:
-            self.attack_queued = True
-            self.already_hit_enemies = set()  # Reset khi combo
-            self.attack2_effect_index = 0
-            self.attack2_effect_timer = 6
+        if self.weapon_type == "Shield":
+            # Shield attack: dùng sprite sheet Characters-shield.png
+            if not self.is_attacking and self.attack_stage == 0:
+                self.is_attacking = True
+                self.attack_frame = 0
+                self.attack_anim_counter = 0
+                self.attack_timer = len(self.sprites_shield_attack) * self.attack_frame_speed
+                self.attack_stage = 1
+                self.attack_wait_timer = 0
+                self.update_attack_hitbox()
+                self.already_hit_enemies = set()
+        elif self.weapon_type == "Machate":
+            # Combo 4 đòn
+            if not self.is_attacking and self.machate_attack_stage == 0:
+                self.is_attacking = True
+                self.machate_attack_stage = 1
+                self.machate_attack_frame = 0
+                self.machate_attack_anim_counter = 0
+                self.machate_attack_timer = 20
+                self.update_attack_hitbox()
+                self.machate_hitbox_timer = 1  # Reset timer khi bắt đầu combo
+                self.already_hit_enemies = {}  # Đổi sang dict: {enemy_id: set(stage)}
+            elif 1 <= self.machate_attack_stage < 4 and self.machate_attack_timer > 0:
+                self.machate_attack_queued[self.machate_attack_stage] = True
+        else:
+            if not self.is_attacking and self.attack_stage == 0:
+                # Đòn đánh lần 1: chỉ frame 2 (index 1)
+                self.is_attacking = True
+                self.attack_frame = 1
+                self.attack_anim_counter = 0
+                self.attack_timer = self.attack_first_frame_speed
+                self.attack_stage = 1
+                self.attack_wait_timer = 15  # cho phép nhấn lần 2 trong 15 frame (~0.25s)
+                self.update_attack_hitbox()
+                self.already_hit_enemies = set()  # Reset mỗi lần tấn công mới
+                self.attack1_effect_index = 0
+                self.attack1_effect_timer = 6  # 3 frame, mỗi frame 2 tick
+            elif self.attack_stage == 1 and self.attack_wait_timer > 0 and not self.is_attacking:
+                # Nhấn lần 2 để combo
+                self.attack_queued = True
+                self.already_hit_enemies = set()  # Reset khi combo
+                self.attack2_effect_index = 0
+                self.attack2_effect_timer = 6
 
     def update_attack_hitbox(self):
+        # Nếu là Shield thì không tạo hitbox tấn công
+        if self.weapon_type == "Shield":
+            self.attack_hitbox = None
+            return
         # Tạo hitbox tấn công phía trước nhân vật, tùy theo hướng
         direction = 1 if self.facing_right else -1
         width = 28   # Giảm độ rộng hitbox tấn công
@@ -436,6 +672,18 @@ class Player:
             x = self.rect.left - width
         y = self.rect.centery - height // 2
         self.attack_hitbox = pygame.Rect(x, y, width, height)
+
+        if self.weapon_type == "Machate" and self.is_attacking and self.machate_attack_stage > 0:
+            direction = 1 if self.facing_right else -1
+            width = 40
+            height = 36
+            if direction == 1:
+                x = self.rect.right
+            else:
+                x = self.rect.left - width
+            y = self.rect.centery - height // 2
+            self.attack_hitbox = pygame.Rect(x, y, width, height)
+            return
 
     def special_attack(self):
         self.energy = 0  # Reset nộ
@@ -452,12 +700,29 @@ class Player:
                 visible = False
         if visible:
             if self.is_attacking:
-                if self.attack_stage == 1:
-                    img = self.sprites_attack1[min(self.attack_frame, len(self.sprites_attack1)-1)]
-                    offset_x, offset_y = self.frame_offsets_attack1[min(self.attack_frame, len(self.frame_offsets_attack1)-1)]
-                elif self.attack_stage == 2:
-                    img = self.sprites_attack2[min(self.attack_frame, len(self.sprites_attack2)-1)]
-                    offset_x, offset_y = self.frame_offsets_attack2[min(self.attack_frame, len(self.frame_offsets_attack2)-1)]
+                if self.weapon_type == "Shield":
+                    img = self.sprites_shield_attack[min(self.attack_frame, len(self.sprites_shield_attack)-1)]
+                    offset_x, offset_y = self.frame_offsets_shield_attack[min(self.attack_frame, len(self.frame_offsets_shield_attack)-1)]
+                elif self.weapon_type == "Machate" and self.machate_attack_stage > 0:
+                    idx = self.machate_attack_stage - 1
+                    frame = min(self.machate_attack_frame, len(self.machate_sprites[idx])-1)
+                    img = self.machate_sprites[idx][frame]
+                    offset_x, offset_y = self.machate_offsets[idx][frame]
+                    if self.facing_right:
+                        screen.blit(img, (self.rect.x + offset_x, self.rect.y + offset_y))
+                    else:
+                        img_flip = pygame.transform.flip(img, True, False)
+                        screen.blit(img_flip, (self.rect.x + offset_x, self.rect.y + offset_y))
+                elif self.weapon_type == "Martial":
+                    if self.attack_stage == 1:
+                        img = self.sprites_attack1[min(self.attack_frame, len(self.sprites_attack1)-1)]
+                        offset_x, offset_y = self.frame_offsets_attack1[min(self.attack_frame, len(self.frame_offsets_attack1)-1)]
+                    elif self.attack_stage == 2:
+                        img = self.sprites_attack2[min(self.attack_frame, len(self.sprites_attack2)-1)]
+                        offset_x, offset_y = self.frame_offsets_attack2[min(self.attack_frame, len(self.frame_offsets_attack2)-1)]
+                    else:
+                        img = self.sprites_stand[self.current_frame]
+                        offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
                 else:
                     img = self.sprites_stand[self.current_frame]
                     offset_x, offset_y = self.frame_offsets_stand[self.current_frame]
@@ -560,7 +825,7 @@ class Player:
             self.attack2_effect_frames.append(frame)
 
         # Vẽ hiệu ứng đòn đánh
-        if self.attack_hitbox:
+        if self.attack_hitbox and self.weapon_type != "Shield":
             if self.is_attacking and self.attack_stage == 1 and self.attack1_effect_index < len(self.attack1_effect_frames):
                 eff_img = self.attack1_effect_frames[self.attack1_effect_index]
                 eff_rect = eff_img.get_rect(center=self.attack_hitbox.center)
